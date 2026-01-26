@@ -11,7 +11,7 @@ from skimage.feature import blob_log
 import cv2
 
 
-def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_area=None):
+def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_area=None, merge_nearby=True):
     """
     Detect galaxies using thresholding and connected components.
     Good for extended objects.
@@ -26,6 +26,8 @@ def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_ar
         Minimum area in pixels for a detected object
     max_area : int or None
         Maximum area in pixels for a detected object. If None, no upper limit.
+    merge_nearby : bool
+        If True, merge nearby detections to reduce over-segmentation (default True)
         
     Returns
     -------
@@ -43,26 +45,49 @@ def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_ar
     else:
         gray = gray.astype(np.uint8)
     
-    # Apply threshold
-    threshold = np.percentile(gray, threshold_percentile)
-    binary = gray > threshold
+    # Try multiple thresholds to catch both bright and dim objects
+    # Lower threshold for bright objects, higher for dim objects
+    thresholds = [
+        np.percentile(gray, threshold_percentile - 10),  # Lower threshold for bright objects
+        np.percentile(gray, threshold_percentile),        # Standard threshold
+    ]
     
-    # Remove small objects (noise)
-    binary = morphology.remove_small_objects(binary, min_size=min_area)
+    all_galaxies = []
     
-    # Find connected components
-    labeled = measure.label(binary)
-    regions = measure.regionprops(labeled)
+    for threshold in thresholds:
+        binary = gray > threshold
+        
+        # Remove small objects (noise)
+        binary = morphology.remove_small_objects(binary, min_size=min_area)
+        
+        # Find connected components
+        labeled = measure.label(binary)
+        regions = measure.regionprops(labeled)
+        
+        # Extract centroids
+        for region in regions:
+            # Check min_area, and max_area only if specified
+            if region.area >= min_area:
+                if max_area is None or region.area <= max_area:
+                    # Get centroid (note: skimage uses (row, col) = (y, x)
+                    y, x = region.centroid
+                    all_galaxies.append((x, y))
     
-    # Extract centroids
-    galaxies = []
-    for region in regions:
-        # Check min_area, and max_area only if specified
-        if region.area >= min_area:
-            if max_area is None or region.area <= max_area:
-                # Get centroid (note: skimage uses (row, col) = (y, x)
-                y, x = region.centroid
-                galaxies.append((x, y))
+    # Remove duplicates and merge nearby detections
+    if merge_nearby:
+        galaxies = merge_nearby_detections(all_galaxies, merge_distance=30)
+    else:
+        # Just remove exact duplicates
+        unique_galaxies = []
+        for x, y in all_galaxies:
+            is_duplicate = False
+            for ux, uy in unique_galaxies:
+                if np.sqrt((x - ux)**2 + (y - uy)**2) < 5:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_galaxies.append((x, y))
+        galaxies = unique_galaxies
     
     return galaxies
 
@@ -113,6 +138,54 @@ def detect_large_bright_objects(image, min_area=100, brightness_percentile=90):
             galaxies.append((x, y))
     
     return galaxies
+
+
+def merge_nearby_detections(galaxies, merge_distance=30):
+    """
+    Merge nearby detections that are likely parts of the same object.
+    This helps reduce over-segmentation.
+    
+    Parameters
+    ----------
+    galaxies : list of tuples
+        List of (x, y) coordinates
+    merge_distance : float
+        Maximum distance to merge detections (default 30 pixels)
+        
+    Returns
+    -------
+    list of tuples : Merged galaxy coordinates
+    """
+    if len(galaxies) == 0:
+        return []
+    
+    # Convert to numpy array for easier processing
+    galaxies_array = np.array(galaxies)
+    merged = []
+    used = set()
+    
+    for i, (x, y) in enumerate(galaxies):
+        if i in used:
+            continue
+        
+        # Find all nearby detections
+        nearby_indices = [i]
+        for j, (ux, uy) in enumerate(galaxies):
+            if j != i and j not in used:
+                dist = np.sqrt((x - ux)**2 + (y - uy)**2)
+                if dist < merge_distance:
+                    nearby_indices.append(j)
+        
+        # Calculate centroid of merged group
+        group_coords = galaxies_array[nearby_indices]
+        merged_x = np.mean(group_coords[:, 0])
+        merged_y = np.mean(group_coords[:, 1])
+        merged.append((merged_x, merged_y))
+        
+        # Mark all in group as used
+        used.update(nearby_indices)
+    
+    return merged
 
 
 def detect_galaxies_blob(image, min_sigma=2, max_sigma=10, num_sigma=10, threshold=0.1):
