@@ -75,9 +75,10 @@ def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_ar
     
     # Remove duplicates and merge nearby detections
     if merge_nearby:
-        galaxies = merge_nearby_detections(all_galaxies, merge_distance=30)
+        # Use conservative merge distance (12 pixels) to only merge obvious fragments
+        galaxies = merge_nearby_detections(all_galaxies, merge_distance=12)
     else:
-        # Just remove exact duplicates
+        # Just remove exact/close duplicates (within 5 pixels)
         unique_galaxies = []
         for x, y in all_galaxies:
             is_duplicate = False
@@ -140,7 +141,7 @@ def detect_large_bright_objects(image, min_area=100, brightness_percentile=90):
     return galaxies
 
 
-def merge_nearby_detections(galaxies, merge_distance=30):
+def merge_nearby_detections(galaxies, merge_distance=12):
     """
     Merge nearby detections that are likely parts of the same object.
     This helps reduce over-segmentation.
@@ -150,7 +151,7 @@ def merge_nearby_detections(galaxies, merge_distance=30):
     galaxies : list of tuples
         List of (x, y) coordinates
     merge_distance : float
-        Maximum distance to merge detections (default 30 pixels)
+        Maximum distance to merge detections (default 12 pixels - conservative to avoid merging separate objects)
         
     Returns
     -------
@@ -159,31 +160,48 @@ def merge_nearby_detections(galaxies, merge_distance=30):
     if len(galaxies) == 0:
         return []
     
-    # Convert to numpy array for easier processing
-    galaxies_array = np.array(galaxies)
+    # First, remove exact/very close duplicates (within 5 pixels) from multi-threshold
+    unique_galaxies = []
+    for x, y in galaxies:
+        is_duplicate = False
+        for ux, uy in unique_galaxies:
+            if np.sqrt((x - ux)**2 + (y - uy)**2) < 5:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            unique_galaxies.append((x, y))
+    
+    # Now merge only very close ones (likely fragments of same object)
+    # Use smaller distance to be conservative
+    galaxies_array = np.array(unique_galaxies)
     merged = []
     used = set()
     
-    for i, (x, y) in enumerate(galaxies):
+    for i, (x, y) in enumerate(unique_galaxies):
         if i in used:
             continue
         
         # Find all nearby detections
         nearby_indices = [i]
-        for j, (ux, uy) in enumerate(galaxies):
+        for j, (ux, uy) in enumerate(unique_galaxies):
             if j != i and j not in used:
                 dist = np.sqrt((x - ux)**2 + (y - uy)**2)
                 if dist < merge_distance:
                     nearby_indices.append(j)
         
-        # Calculate centroid of merged group
-        group_coords = galaxies_array[nearby_indices]
-        merged_x = np.mean(group_coords[:, 0])
-        merged_y = np.mean(group_coords[:, 1])
-        merged.append((merged_x, merged_y))
-        
-        # Mark all in group as used
-        used.update(nearby_indices)
+        # Only merge if we found nearby ones (otherwise keep original)
+        if len(nearby_indices) > 1:
+            # Calculate centroid of merged group
+            group_coords = galaxies_array[nearby_indices]
+            merged_x = np.mean(group_coords[:, 0])
+            merged_y = np.mean(group_coords[:, 1])
+            merged.append((merged_x, merged_y))
+            # Mark all in group as used
+            used.update(nearby_indices)
+        else:
+            # Keep original if no nearby detections
+            merged.append((x, y))
+            used.add(i)
     
     return merged
 
