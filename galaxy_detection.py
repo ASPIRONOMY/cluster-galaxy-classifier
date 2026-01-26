@@ -1,0 +1,318 @@
+"""
+Galaxy Detection for Extended Objects
+Detects galaxies in images using various CV techniques
+Supports both FITS and PNG images
+"""
+
+import numpy as np
+from scipy import ndimage
+from skimage import measure, morphology, filters
+from skimage.feature import blob_log
+import cv2
+
+
+def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_area=None):
+    """
+    Detect galaxies using thresholding and connected components.
+    Good for extended objects.
+    
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Grayscale or RGB image
+    threshold_percentile : float
+        Percentile for threshold (0-100). Lower values catch brighter objects.
+    min_area : int
+        Minimum area in pixels for a detected object
+    max_area : int or None
+        Maximum area in pixels for a detected object. If None, no upper limit.
+        
+    Returns
+    -------
+    list of tuples : [(x, y), ...] coordinates of detected galaxies
+    """
+    # Convert to grayscale if RGB
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+    
+    # Normalize to 0-255
+    if gray.max() > 255:
+        gray = ((gray - gray.min()) / (gray.max() - gray.min()) * 255).astype(np.uint8)
+    else:
+        gray = gray.astype(np.uint8)
+    
+    # Apply threshold
+    threshold = np.percentile(gray, threshold_percentile)
+    binary = gray > threshold
+    
+    # Remove small objects (noise)
+    binary = morphology.remove_small_objects(binary, min_size=min_area)
+    
+    # Find connected components
+    labeled = measure.label(binary)
+    regions = measure.regionprops(labeled)
+    
+    # Extract centroids
+    galaxies = []
+    for region in regions:
+        # Check min_area, and max_area only if specified
+        if region.area >= min_area:
+            if max_area is None or region.area <= max_area:
+                # Get centroid (note: skimage uses (row, col) = (y, x)
+                y, x = region.centroid
+                galaxies.append((x, y))
+    
+    return galaxies
+
+
+def detect_large_bright_objects(image, min_area=100, brightness_percentile=90):
+    """
+    Specifically detect large, bright objects that might be missed by standard thresholding.
+    Uses lower threshold to catch very bright objects.
+    
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Grayscale or RGB image
+    min_area : int
+        Minimum area for large objects (default 100 pixels)
+    brightness_percentile : float
+        Percentile for brightness threshold (default 90 = top 10% brightest)
+        
+    Returns
+    -------
+    list of tuples : [(x, y), ...] coordinates of detected large bright objects
+    """
+    # Convert to grayscale if RGB
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+    
+    # Normalize to 0-255
+    if gray.max() > 255:
+        gray = ((gray - gray.min()) / (gray.max() - gray.min()) * 255).astype(np.uint8)
+    else:
+        gray = gray.astype(np.uint8)
+    
+    # Use lower threshold to catch bright objects (top 10-20% brightest)
+    threshold = np.percentile(gray, brightness_percentile)
+    binary = gray > threshold
+    
+    # Find connected components
+    labeled = measure.label(binary)
+    regions = measure.regionprops(labeled)
+    
+    # Extract centroids of large objects
+    galaxies = []
+    for region in regions:
+        if region.area >= min_area:  # Only large objects
+            y, x = region.centroid
+            galaxies.append((x, y))
+    
+    return galaxies
+
+
+def detect_galaxies_blob(image, min_sigma=2, max_sigma=10, num_sigma=10, threshold=0.1):
+    """
+    Detect galaxies using Laplacian of Gaussian (LoG) blob detection.
+    Good for finding circular/elliptical objects.
+    
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Grayscale or RGB image
+    min_sigma, max_sigma : float
+        Range of sigma values for blob detection
+    num_sigma : int
+        Number of sigma values to try
+    threshold : float
+        Detection threshold
+        
+    Returns
+    -------
+    list of tuples : [(x, y), ...] coordinates of detected galaxies
+    """
+    # Convert to grayscale if RGB
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+    
+    # Normalize
+    if gray.max() > 255:
+        gray = ((gray - gray.min()) / (gray.max() - gray.min()) * 255).astype(np.uint8)
+    else:
+        gray = gray.astype(np.uint8)
+    
+    # Detect blobs
+    blobs = blob_log(gray, max_sigma=max_sigma, num_sigma=num_sigma, threshold=threshold)
+    
+    # Extract coordinates (blob_log returns [y, x, sigma])
+    galaxies = [(blob[1], blob[0]) for blob in blobs]  # (x, y)
+    
+    return galaxies
+
+
+def detect_galaxies_contour(image, threshold_percentile=80, min_area=10):
+    """
+    Detect galaxies using contour detection.
+    Good for irregular/extended objects.
+    
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Grayscale or RGB image
+    threshold_percentile : float
+        Percentile for threshold
+    min_area : int
+        Minimum contour area
+        
+    Returns
+    -------
+    list of tuples : [(x, y), ...] coordinates of detected galaxies
+    """
+    # Convert to grayscale if RGB
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image
+    
+    # Normalize
+    if gray.max() > 255:
+        gray = ((gray - gray.min()) / (gray.max() - gray.min()) * 255).astype(np.uint8)
+    else:
+        gray = gray.astype(np.uint8)
+    
+    # Apply threshold
+    threshold = np.percentile(gray, threshold_percentile)
+    _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+    
+    # Find contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Extract centroids
+    galaxies = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area >= min_area:
+            # Calculate centroid
+            M = cv2.moments(contour)
+            if M["m00"] != 0:
+                x = int(M["m10"] / M["m00"])
+                y = int(M["m01"] / M["m00"])
+                galaxies.append((x, y))
+    
+    return galaxies
+
+
+def detect_galaxies_combined(image, method='threshold', **kwargs):
+    """
+    Combined detection function that tries multiple methods.
+    
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Input image
+    method : str
+        'threshold', 'blob', 'contour', 'all', or 'comprehensive'
+    **kwargs : dict
+        Additional parameters for detection methods
+        
+    Returns
+    -------
+    list of tuples : Detected galaxy coordinates
+    """
+    if method == 'threshold':
+        return detect_galaxies_threshold(image, **kwargs)
+    elif method == 'blob':
+        return detect_galaxies_blob(image, **kwargs)
+    elif method == 'contour':
+        return detect_galaxies_contour(image, **kwargs)
+    elif method == 'all':
+        # Combine all methods and remove duplicates
+        all_galaxies = []
+        
+        # Filter kwargs for each method
+        threshold_kwargs = {k: v for k, v in kwargs.items() 
+                           if k in ['threshold_percentile', 'min_area', 'max_area']}
+        blob_kwargs = {k: v for k, v in kwargs.items() 
+                      if k in ['min_sigma', 'max_sigma', 'num_sigma', 'threshold']}
+        contour_kwargs = {k: v for k, v in kwargs.items() 
+                         if k in ['threshold_percentile', 'min_area']}
+        
+        all_galaxies.extend(detect_galaxies_threshold(image, **threshold_kwargs))
+        all_galaxies.extend(detect_galaxies_blob(image, **blob_kwargs))
+        all_galaxies.extend(detect_galaxies_contour(image, **contour_kwargs))
+        
+        # Remove duplicates (within 5 pixels)
+        unique_galaxies = []
+        for x, y in all_galaxies:
+            is_duplicate = False
+            for ux, uy in unique_galaxies:
+                if np.sqrt((x - ux)**2 + (y - uy)**2) < 5:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_galaxies.append((x, y))
+        
+        return unique_galaxies
+    elif method == 'comprehensive':
+        # Comprehensive method: combines all methods + specifically looks for large bright objects
+        all_galaxies = []
+        
+        # Standard methods - filter kwargs for each method
+        threshold_kwargs = {k: v for k, v in kwargs.items() 
+                           if k in ['threshold_percentile', 'min_area', 'max_area']}
+        blob_kwargs = {k: v for k, v in kwargs.items() 
+                      if k in ['min_sigma', 'max_sigma', 'num_sigma', 'threshold']}
+        contour_kwargs = {k: v for k, v in kwargs.items() 
+                         if k in ['threshold_percentile', 'min_area']}
+        
+        all_galaxies.extend(detect_galaxies_threshold(image, **threshold_kwargs))
+        all_galaxies.extend(detect_galaxies_blob(image, **blob_kwargs))
+        all_galaxies.extend(detect_galaxies_contour(image, **contour_kwargs))
+        
+        # Specifically look for large bright objects
+        large_bright = detect_large_bright_objects(image, min_area=100)
+        all_galaxies.extend(large_bright)
+        
+        # Remove duplicates (within 10 pixels for comprehensive)
+        unique_galaxies = []
+        for x, y in all_galaxies:
+            is_duplicate = False
+            for ux, uy in unique_galaxies:
+                if np.sqrt((x - ux)**2 + (y - uy)**2) < 10:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_galaxies.append((x, y))
+        
+        return unique_galaxies
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'threshold', 'blob', 'contour', 'all', or 'comprehensive'")
+
+
+def estimate_cluster_center(galaxy_coordinates):
+    """
+    Estimate cluster center from detected galaxies.
+    
+    Parameters
+    ----------
+    galaxy_coordinates : list of tuples
+        List of (x, y) coordinates
+        
+    Returns
+    -------
+    tuple : (center_x, center_y)
+    """
+    if len(galaxy_coordinates) == 0:
+        return (0, 0)
+    
+    coords = np.array(galaxy_coordinates)
+    center_x = np.median(coords[:, 0])
+    center_y = np.median(coords[:, 1])
+    
+    return (center_x, center_y)
