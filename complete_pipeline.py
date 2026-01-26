@@ -54,7 +54,7 @@ def load_model(model_dir='models', model_type='random_forest'):
     }
 
 
-def process_cluster_image(image_file, model_dict, detection_method='threshold',
+def process_cluster_image(image_file, model_dict, detection_method='comprehensive',
                           detection_params=None, feature_radius=0.01, 
                           confidence_threshold=0.5, adaptive_radius=True):
     """
@@ -274,7 +274,7 @@ def export_results(results, output_file='cluster_members.csv'):
 
 
 def run_complete_pipeline(image_file, model_dir='models', model_type='random_forest',
-                         detection_method='threshold', output_dir='results',
+                         detection_method='comprehensive', output_dir='results',
                          confidence_threshold=0.7, feature_radius=0.01, adaptive_radius=True,
                          detection_params=None):
     """
@@ -316,9 +316,10 @@ def run_complete_pipeline(image_file, model_dir='models', model_type='random_for
     # Set default detection params if not provided (no max_area limit)
     if detection_params is None:
         detection_params = {
-            'threshold_percentile': 75,  # Lower threshold to catch brighter objects
-            'min_area': 5,
-            'max_area': None  # No upper limit by default - detects all sizes
+            'threshold_percentile': 70,  # Lower threshold to catch brighter/larger objects
+            'min_area': 10,  # Increased to reduce small fragments
+            'max_area': None,  # No upper limit by default - detects all sizes
+            'merge_nearby': True  # Merge nearby detections to reduce over-segmentation
         }
     
     # Load model

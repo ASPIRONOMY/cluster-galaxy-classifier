@@ -46,8 +46,9 @@ def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_ar
         gray = gray.astype(np.uint8)
     
     # Try multiple thresholds to catch both bright and dim objects
-    # Lower threshold for bright objects, higher for dim objects
+    # Use wider range to catch very bright/large objects
     thresholds = [
+        np.percentile(gray, threshold_percentile - 15),  # Very low threshold for bright/large objects
         np.percentile(gray, threshold_percentile - 10),  # Lower threshold for bright objects
         np.percentile(gray, threshold_percentile),        # Standard threshold
     ]
@@ -57,17 +58,23 @@ def detect_galaxies_threshold(image, threshold_percentile=85, min_area=5, max_ar
     for threshold in thresholds:
         binary = gray > threshold
         
-        # Remove small objects (noise)
-        binary = morphology.remove_small_objects(binary, min_size=min_area)
+        # Remove small objects (noise) - but be careful not to remove large objects
+        # For the lowest threshold, use smaller min_area to catch large objects
+        if threshold == thresholds[0]:  # Lowest threshold
+            binary_cleaned = morphology.remove_small_objects(binary, min_size=max(5, min_area // 2))
+        else:
+            binary_cleaned = morphology.remove_small_objects(binary, min_size=min_area)
         
         # Find connected components
-        labeled = measure.label(binary)
+        labeled = measure.label(binary_cleaned)
         regions = measure.regionprops(labeled)
         
         # Extract centroids
         for region in regions:
             # Check min_area, and max_area only if specified
-            if region.area >= min_area:
+            # For large objects, be more lenient
+            area_threshold = min_area if region.area < 500 else min_area // 2
+            if region.area >= area_threshold:
                 if max_area is None or region.area <= max_area:
                     # Get centroid (note: skimage uses (row, col) = (y, x)
                     y, x = region.centroid
@@ -356,7 +363,7 @@ def detect_galaxies_combined(image, method='threshold', **kwargs):
         
         # Standard methods - filter kwargs for each method
         threshold_kwargs = {k: v for k, v in kwargs.items() 
-                           if k in ['threshold_percentile', 'min_area', 'max_area']}
+                           if k in ['threshold_percentile', 'min_area', 'max_area', 'merge_nearby']}
         blob_kwargs = {k: v for k, v in kwargs.items() 
                       if k in ['min_sigma', 'max_sigma', 'num_sigma', 'threshold']}
         contour_kwargs = {k: v for k, v in kwargs.items() 
@@ -366,9 +373,13 @@ def detect_galaxies_combined(image, method='threshold', **kwargs):
         all_galaxies.extend(detect_galaxies_blob(image, **blob_kwargs))
         all_galaxies.extend(detect_galaxies_contour(image, **contour_kwargs))
         
-        # Specifically look for large bright objects
-        large_bright = detect_large_bright_objects(image, min_area=100)
-        all_galaxies.extend(large_bright)
+        # Specifically look for large bright objects with multiple thresholds
+        large_bright1 = detect_large_bright_objects(image, min_area=50, brightness_percentile=85)
+        large_bright2 = detect_large_bright_objects(image, min_area=100, brightness_percentile=90)
+        large_bright3 = detect_large_bright_objects(image, min_area=200, brightness_percentile=95)
+        all_galaxies.extend(large_bright1)
+        all_galaxies.extend(large_bright2)
+        all_galaxies.extend(large_bright3)
         
         # Remove duplicates (within 20 pixels for comprehensive - larger to avoid over-segmentation)
         # Sort by distance to process larger/more central objects first
