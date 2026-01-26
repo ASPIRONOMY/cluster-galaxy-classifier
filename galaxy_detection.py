@@ -279,12 +279,16 @@ def detect_galaxies_combined(image, method='threshold', **kwargs):
         large_bright = detect_large_bright_objects(image, min_area=100)
         all_galaxies.extend(large_bright)
         
-        # Remove duplicates (within 10 pixels for comprehensive)
+        # Remove duplicates (within 20 pixels for comprehensive - larger to avoid over-segmentation)
+        # Sort by distance to process larger/more central objects first
+        all_galaxies_sorted = sorted(all_galaxies, key=lambda p: (p[0]**2 + p[1]**2))
+        
         unique_galaxies = []
-        for x, y in all_galaxies:
+        for x, y in all_galaxies_sorted:
             is_duplicate = False
             for ux, uy in unique_galaxies:
-                if np.sqrt((x - ux)**2 + (y - uy)**2) < 10:
+                # Increased distance threshold to merge over-segmented objects
+                if np.sqrt((x - ux)**2 + (y - uy)**2) < 20:
                     is_duplicate = True
                     break
             if not is_duplicate:
