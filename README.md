@@ -4,7 +4,7 @@ A computer vision system to automatically identify cluster member galaxies in as
 To use the trained model on your own cluster image go to : https://colab.research.google.com/github/ASPIRONOMY/cluster-galaxy-classifier/blob/main/student_notebook_colab.ipynb
  
 
-   [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ASPIRONOMY/cluster-galaxy-classifier/blob/main/train_our_model/cluster_annotation_colab.ipynb)
+   [![Open In Colab](https://colab.research.google.com/github/ASPIRONOMY/cluster-galaxy-classifier/blob/main/train_our_model/cluster_annotation_colab.ipynb)
 
 ## Overview
 
